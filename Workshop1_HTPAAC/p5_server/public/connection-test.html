@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Connection Test</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background: #1a1a1a;
+            color: #00ff00;
+            padding: 20px;
+            margin: 0;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: #00ffff;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .test-section {
+            background: #2a2a2a;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            border: 1px solid #444;
+        }
+        
+        .test-section h3 {
+            color: #ffaa00;
+            margin-top: 0;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 14px;
+            margin: 10px 0;
+        }
+        
+        button {
+            background: #0066cc;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            font-family: monospace;
+        }
+        
+        button:hover {
+            background: #0088ff;
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        
+        .status.success {
+            background: rgba(0, 255, 0, 0.2);
+            border: 1px solid #00ff00;
+            color: #00ff00;
+        }
+        
+        .status.error {
+            background: rgba(255, 0, 0, 0.2);
+            border: 1px solid #ff0000;
+            color: #ff0000;
+        }
+        
+        .status.info {
+            background: rgba(0, 255, 255, 0.2);
+            border: 1px solid #00ffff;
+            color: #00ffff;
+        }
+        
+        .log {
+            background: #000;
+            color: #0f0;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            height: 200px;
+            overflow-y: scroll;
+            border: 1px solid #333;
+            margin: 10px 0;
+        }
+        
+        .auto-detected {
+            background: rgba(255, 255, 0, 0.1);
+            border: 1px solid #ffff00;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        
+        .quick-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin: 10px 0;
+        }
+        
+        .quick-buttons button {
+            font-size: 11px;
+            padding: 5px 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔌 WebSocket Connection Test</h1>
+        
+        <div class="test-section">
+            <h3>📡 Auto-Detected Server Info</h3>
+            <div class="auto-detected">
+                <div><strong>Current Page:</strong> <span id="current-host">-</span></div>
+                <div><strong>Suggested WebSocket URL:</strong> <span id="suggested-url">-</span></div>
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <h3>🧪 Connection Test</h3>
+            
+            <label>WebSocket URL to test:</label>
+            <input type="text" id="ws-url" placeholder="ws://10.31.159.164:3000/ws">
+            
+            <div class="quick-buttons">
+                <button onclick="setURL('ws://localhost:3000/ws')">localhost</button>
+                <button onclick="setURL('ws://10.31.159.164:3000/ws')">10.31.159.164</button>
+                <button onclick="setURL('ws://192.168.1.100:3000/ws')">192.168.1.100</button>
+                <button onclick="useAutoDetected()">Use Auto-Detected</button>
+            </div>
+            
+            <div>
+                <button id="connect-btn" onclick="testConnection()">🔌 Test Connection</button>
+                <button id="disconnect-btn" onclick="disconnect()" disabled>❌ Disconnect</button>
+                <button onclick="clearLog()">🧹 Clear Log</button>
+            </div>
+            
+            <div id="status" class="status info">Ready to test connection</div>
+        </div>
+        
+        <div class="test-section">
+            <h3>📋 Connection Log</h3>
+            <div id="log" class="log"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>💡 Troubleshooting Tips</h3>
+            <ul>
+                <li><strong>Path Required:</strong> Make sure to include <code>/ws</code> at the end</li>
+                <li><strong>Check Server:</strong> Verify server is running and shows network addresses</li>
+                <li><strong>Firewall:</strong> Check if firewall is blocking port 3000</li>
+                <li><strong>Network:</strong> Ensure both devices are on the same network</li>
+                <li><strong>IP Address:</strong> Use the exact IP shown in server console output</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let isConnected = false;
+        
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const colors = {
+                info: '#00ffff',
+                success: '#00ff00',
+                error: '#ff0000',
+                warning: '#ffaa00'
+            };
+            
+            logDiv.innerHTML += `<div style="color: ${colors[type]}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function updateStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+        }
+        
+        function setURL(url) {
+            document.getElementById('ws-url').value = url;
+        }
+        
+        function useAutoDetected() {
+            const suggested = document.getElementById('suggested-url').textContent;
+            if (suggested !== '-') {
+                document.getElementById('ws-url').value = suggested;
+            }
+        }
+        
+        function testConnection() {
+            if (isConnected) {
+                disconnect();
+                return;
+            }
+            
+            const url = document.getElementById('ws-url').value.trim();
+            if (!url) {
+                updateStatus('Please enter a WebSocket URL', 'error');
+                return;
+            }
+            
+            log(`🔄 Attempting to connect to: ${url}`, 'info');
+            updateStatus('Connecting...', 'info');
+            
+            document.getElementById('connect-btn').disabled = true;
+            
+            try {
+                ws = new WebSocket(url);
+                
+                const timeout = setTimeout(() => {
+                    if (ws && ws.readyState === WebSocket.CONNECTING) {
+                        ws.close();
+                        log('❌ Connection timeout (10 seconds)', 'error');
+                        updateStatus('Connection timeout', 'error');
+                        document.getElementById('connect-btn').disabled = false;
+                    }
+                }, 10000);
+                
+                ws.onopen = () => {
+                    clearTimeout(timeout);
+                    isConnected = true;
+                    log('✅ WebSocket connected successfully!', 'success');
+                    updateStatus('Connected successfully!', 'success');
+                    
+                    document.getElementById('connect-btn').textContent = '✅ Connected';
+                    document.getElementById('connect-btn').disabled = false;
+                    document.getElementById('disconnect-btn').disabled = false;
+                    
+                    // Test registration
+                    log('📝 Testing registration...', 'info');
+                    ws.send(JSON.stringify({
+                        type: 'register',
+                        clientType: 'gsr_node',
+                        nodeId: 0,
+                        groupId: 1
+                    }));
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        log(`📨 Received: ${JSON.stringify(data)}`, 'success');
+                        
+                        if (data.type === 'register_ack') {
+                            log('🎉 Registration successful!', 'success');
+                        }
+                    } catch (e) {
+                        log(`📨 Received (raw): ${event.data}`, 'info');
+                    }
+                };
+                
+                ws.onclose = (event) => {
+                    clearTimeout(timeout);
+                    isConnected = false;
+                    log(`🔌 Connection closed (code: ${event.code}, reason: ${event.reason})`, 'warning');
+                    updateStatus('Connection closed', 'info');
+                    
+                    document.getElementById('connect-btn').textContent = '🔌 Test Connection';
+                    document.getElementById('connect-btn').disabled = false;
+                    document.getElementById('disconnect-btn').disabled = true;
+                };
+                
+                ws.onerror = (error) => {
+                    clearTimeout(timeout);
+                    log('❌ WebSocket error occurred', 'error');
+                    updateStatus('Connection failed', 'error');
+                    
+                    document.getElementById('connect-btn').disabled = false;
+                    
+                    // Provide specific error guidance
+                    const url_obj = new URL(url);
+                    log(`🔍 Troubleshooting for ${url_obj.hostname}:${url_obj.port}:`, 'warning');
+                    log(`  • Check if server is running on ${url_obj.hostname}:${url_obj.port}`, 'warning');
+                    log(`  • Verify the path includes '/ws'`, 'warning');
+                    log(`  • Check firewall settings`, 'warning');
+                    log(`  • Try ping ${url_obj.hostname} to test connectivity`, 'warning');
+                };
+                
+            } catch (error) {
+                log(`❌ Failed to create WebSocket: ${error.message}`, 'error');
+                updateStatus('Invalid WebSocket URL', 'error');
+                document.getElementById('connect-btn').disabled = false;
+            }
+        }
+        
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            isConnected = false;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+        
+        // Auto-detect server info
+        window.onload = () => {
+            const currentHost = window.location.host;
+            const suggestedURL = currentHost ? `ws://${currentHost}/ws` : 'ws://localhost:3000/ws';
+            
+            document.getElementById('current-host').textContent = currentHost || 'file://';
+            document.getElementById('suggested-url').textContent = suggestedURL;
+            document.getElementById('ws-url').value = suggestedURL;
+            
+            log('🚀 Connection tester loaded', 'info');
+            log(`💡 Auto-detected URL: ${suggestedURL}`, 'info');
+        };
+    </script>
+</body>
+</html>

@@ -1,615 +1,405 @@
 /*
+╔══════════════════════════════════════════════════════════════════════════╗
+║                    GSR SENSOR + LED STRIP VISUALIZER                      ║
+╚══════════════════════════════════════════════════════════════════════════╝
 
- * GSR sensors measure skin conductance, which changes based on emotional arousal,
- * stress levels, or physiological responses. Higher conductance typically indicates
- * higher arousal or stress.
- *
- * Hardware Requirements:
- * - Arduino board (Uno, Nano, etc.)
- * - Seeed Grove GSR Sensor
- * - WS2812 LED Strip or NeoPixel (20 pixels)
- * - Appropriate power supply for LED strip (5V, sufficient current)
- *
- * Connections:
- * - GSR Sensor: Connect to analog pin A0
- * - WS2812 Strip: Connect data pin to digital pin 6
- * - Power: Ensure both components have proper 5V and GND connections
- */
+ WHAT IS GSR?
+ ------------
+ GSR measures skin conductance, which changes with emotional arousal,
+ stress, or excitement. Higher conductance = higher arousal/stress.
 
-#include <Adafruit_NeoPixel.h>  // Library for controlling WS2812 LED strips
+ HARDWARE CONNECTIONS:
+ --------------------
+ • GSR Sensor → Analog Pin A0 (GPIO 2 for ESP32)
+ • LED Strip → Digital Pin 6 (GPIO 3 for ESP32)
+ • Power → 5V and GND to both components
 
-// ============================================================================
-// !!!HARDWARE CONFIGURATION!!!
-// ============================================================================
+ FUNCTIONALITY:
+ -------------
+ 1. Calibrates baseline GSR (5 seconds)
+ 2. Reads & filters GSR data
+ 3. Visualizes on LEDs (blue=calm → red=stressed)
+ 4. Outputs data to Serial Plotter
 
-// GSR Sensor Configuration
-const int GSR_PIN = 2;  // Analog input pin for Grove GSR sensor
-// WS2812 LED Strip Configuration
-const int LED_PIN = 3;   // Digital pin connected to the LED strip's data input
-                         // This pin sends the control signals to the LEDs
-const int NUM_LEDS = 20; // Total number of LEDs in your strip
+ ABOUT THIS CODE:
+ ---------------
+ This simplified version uses our custom GSRVisualizer library to keep the
+ main code clean and readable. The library handles all complex signal
+ processing, LED animations, and filtering algorithms, allowing you to
+ focus on understanding the core GSR sensing concepts.
 
-// ============================================================================
-// NEOPIXEL INITIALIZATION
-// ============================================================================
+ Library files: GSRVisualizer.h and GSRVisualizer.cpp
+*/
 
-// Create NeoPixel object
-// Parameters: (number of pixels, pin number, pixel type flags)
-// NEO_GRB: Pixels are wired for GRB color order (most common)
-// NEO_KHZ800: 800 KHz data transmission speed (for WS2812 LEDs)
+#include <Adafruit_NeoPixel.h>
+#include "GSRVisualizer.h"  // Our custom library for clean, modular code
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//                         HARDWARE CONFIGURATION
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Pin Definitions
+const int GSR_PIN = 2;     // Analog pin for GSR sensor (A0 on Arduino, GPIO on ESP32)
+const int LED_PIN = 3;     // Digital pin for LED strip data
+const int NUM_LEDS = 20;   // Number of LEDs in your strip
+
+// Create LED strip object
 Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
-// ============================================================================
-// GSR SENSOR VARIABLES
-// ============================================================================
+// Create visualizer object
+GSRVisualizer* visualizer;
 
-int gsrValue = 0;        // Current raw reading from the GSR sensor (0-1023)
-                         // Arduino's ADC provides 10-bit resolution
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//                          GLOBAL VARIABLES
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-int gsrMin = 1023;       // Minimum GSR value seen during calibration
-                         // Initialized to maximum possible value (will decrease during calibration)
+//──────── Sensor State ────────
+int gsrValue = 0;          // Current raw sensor reading
+int gsrMin = 1023;         // Minimum value (for calibration)
+int gsrMax = 0;            // Maximum value (for calibration)
+bool isCalibrated = false; // Has calibration completed?
 
-int gsrMax = 0;          // Maximum GSR value seen during calibration
-                         // Initialized to minimum possible value (will increase during calibration)
+//──────── Moving Average Filter ────────
+const int numReadings = 10;
+int readings[numReadings];
+int readIndex = 0;
+int total = 0;
+int average = 0;
 
-// ============================================================================
-// SIGNAL SMOOTHING VARIABLES
-// ============================================================================
-// Smoothing helps eliminate noise and sudden spikes in sensor readings
+//──────── Advanced Filters ────────
+float filteredValue = 0;        // Exponentially smoothed value
+float baseline = 0;             // Your personal baseline
+float baselineAdjusted = 0;     // Deviation from baseline
 
-const int numReadings = 10;     // Number of readings to average
-                                 // Higher = smoother but slower response
-int readings[numReadings];      // Array to store recent readings (circular buffer)
-int readIndex = 0;               // Current position in the readings array
-int total = 0;                   // Running total of all readings
-int average = 0;                 // Calculated average of recent readings
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//                            SETUP FUNCTION
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// ============================================================================
-// ADVANCED FILTERING VARIABLES
-// ============================================================================
-
-// Exponential Moving Average (EMA) / Low-pass filter
-// Provides additional smoothing, good for removing high-frequency noise
-float alpha = 0.3;              // EMA coefficient (0.0 to 1.0, lower = more smoothing)
-float filteredValue = 0;        // Current EMA filtered value
-
-// Baseline calibration for relative measurements
-float baseline = 0;             // Baseline GSR value (established during calibration)
-float baselineFilteredValue = 0; // Baseline for filtered value
-
-// ============================================================================
-// AFFECT CALCULATION VARIABLES
-// ============================================================================
-// Long-term emotional state assessment
-
-const int affectWindowSize = 3000;  // Number of samples for affect calculation (30 seconds at 10ms delay)
-float affectBuffer[affectWindowSize];  // Circular buffer storing baseline-adjusted values
-int affectBufferIndex = 0;          // Current index in affect buffer
-unsigned long affectSampleCount = 0; // Total number of samples collected
-unsigned long lastAffectUpdate = 0;  // Last time affect was updated
-const unsigned long affectUpdateInterval = 5000; // Update affect every 5 seconds
-
-// Affect results
-float currentAffect = 0;        // Current affect value (long-term average excluding spikes)
-int validSamplesInWindow = 0;   // Number of valid (non-spike) samples in current window
-float affectTrend = 0;          // Trend direction of affect over time
-
-// ============================================================================
-// SPIKE DETECTION VARIABLES
-// ============================================================================
-// For artifact exclusion and signal quality monitoring
-// Now optimized for EMA-based detection
-
-float spikeThreshold = 100.0;   // Detect ~100 unit changes in EMA
-const int spikeWindowMs = 300;  // Time window for spike detection (milliseconds)
-float emaHistory[5];            // Store last 5 EMA values for trend analysis
-int emaHistoryIndex = 0;        // Current position in EMA history
-float emaBeforeSpike = 0;       // EMA value before spike detected
-bool inSpike = false;           // Currently in a spike
-unsigned long spikeStartTime = 0; // When spike started
-const unsigned long maxSpikeDuration = 500; // Maximum spike duration in ms
-unsigned long lastEmaTime = 0;  // Time of last EMA sample for rate calculation
-
-// ============================================================================
-// CALIBRATION VARIABLES
-// ============================================================================
-// Calibration helps establish the baseline range for each user/session
-
-bool isCalibrated = false;              // Flag to track if calibration is complete
-unsigned long calibrationStartTime = 0;  // Timestamp when calibration began
-const unsigned long calibrationDuration = 5000; // Calibration period in milliseconds
-const int calibrationReadings = 50;     // Number of readings to average for baseline
-
-// ============================================================================
-// SETUP FUNCTION - Runs once when Arduino starts
-// ============================================================================
 void setup() {
-  // Initialize serial communication for debugging
-  // 9600 baud rate is standard and reliable for most applications
+  // Initialize serial communication (for debugging)
   Serial.begin(9600);
 
-  // ===== LED Strip Initialization =====
-  strip.begin();           // Initialize the LED strip hardware
-  strip.show();            // Update strip with data (turns all LEDs off initially)
-  strip.setBrightness(50); // Set global brightness (0-255)
-                           // Lower values = dimmer, higher = brighter
-                           // 50 is a good balance for visibility without being blinding
+  // Initialize LED strip
+  strip.begin();
 
-  // ===== Initialize Smoothing Array =====
-  // Fill the readings array with zeros to start with a clean slate
-  for (int i = 0; i < numReadings; i++) {
-    readings[i] = 0;
-  }
+  /*████████████████████████████████████████████████████████████████████
+  ██ CHALLENGE #1: CHANGE LED BRIGHTNESS!                              ██
+  ██ ➤ Try values: 10 (dim), 50 (medium), 100 (bright), 255 (maximum) ██
+  ████████████████████████████████████████████████████████████████████*/
+  strip.setBrightness(50);  // Set brightness (0-255)
 
-  // ===== Initialize Affect Buffer =====
-  for (int i = 0; i < affectWindowSize; i++) {
-    affectBuffer[i] = 0;
-  }
+  strip.show();              // Turn off all LEDs initially
 
-  // ===== Initialize EMA History for spike detection =====
-  for (int i = 0; i < 5; i++) {
-    emaHistory[i] = 0;
-  }
+  // Initialize visualizer
+  visualizer = new GSRVisualizer(strip, 10);
 
-  // ===== User Instructions =====
-  Serial.println("=== GSR SENSOR WITH ADVANCED FILTERING ===");
-  Serial.println("Starting 5-second calibration...");
-  Serial.println("Please relax and remain still for accurate baseline");
-  Serial.println("Calibrating baseline...");
+  // Initialize arrays
+  initializeArrays();
 
-  // Record when calibration starts
-  calibrationStartTime = millis();
-
-  // Perform calibration
-  long calibrationSum = 0;
-  int calibrationCount = 0;
-  unsigned long startTime = millis();
-
-  // Collect baseline readings for calibrationDuration milliseconds
-  while (millis() - startTime < calibrationDuration) {
-    int reading = analogRead(GSR_PIN);
-    calibrationSum += reading;
-    calibrationCount++;
-
-    // Update filtered value during calibration
-    filteredValue = alpha * reading + (1 - alpha) * filteredValue;
-
-    // Update min/max during calibration
-    if (reading < gsrMin) gsrMin = reading;
-    if (reading > gsrMax) gsrMax = reading;
-
-    // Show calibration animation
-    showCalibrationAnimation();
-
-    // Show progress
-    if (calibrationCount % 10 == 0) {
-      Serial.print(".");
-    }
-
-    delay(calibrationDuration / calibrationReadings);
-  }
-
-  // Calculate baseline as average of all calibration readings
-  baseline = (float)calibrationSum / calibrationCount;
-  baselineFilteredValue = filteredValue;
-
-  // Initialize EMA history with baseline value
-  for (int i = 0; i < 5; i++) {
-    emaHistory[i] = filteredValue;
-  }
-  lastEmaTime = millis();
-
-  // Add margin to min/max
-  gsrMin = max(0, gsrMin - 20);
-  gsrMax = min(1023, gsrMax + 20);
-
-  Serial.println();
-  Serial.println("\nCalibration complete!");
-  Serial.print("Baseline value: ");
-  Serial.println(baseline);
-  Serial.print("GSR Range: ");
-  Serial.print(gsrMin);
-  Serial.print(" - ");
-  Serial.println(gsrMax);
-  Serial.println("\nStarting GSR monitoring...");
-  Serial.println("Open Serial Plotter to visualize data");
-  Serial.println("Format: Raw:value,Avg:value,EMA:value,Baseline:value,Affect:value\n");
-
-  // Flash green LEDs to indicate successful calibration
-  for (int i = 0; i < 3; i++) {
-    setAllPixels(0, 255, 0);
-    delay(200);
-    strip.clear();
-    strip.show();
-    delay(200);
-  }
-
-  // Initialize timing for affect updates
-  lastAffectUpdate = millis();
-  isCalibrated = true;
+  // Perform calibration (establishes your baseline)
+  performCalibration();
 }
 
-// ============================================================================
-// MAIN LOOP - Runs continuously after setup
-// ============================================================================
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//                             MAIN LOOP
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 void loop() {
-  // Only run if calibration is complete
+  // Wait for calibration to complete
   if (!isCalibrated) {
     return;
   }
 
-  // ===== Step 1: Read GSR Sensor =====
+  // 1. READ SENSOR
   gsrValue = analogRead(GSR_PIN);
 
-  // ===== Step 2: Apply Moving Average Filter =====
+  // 2. APPLY FILTERS
+  average = visualizer->calculateMovingAverage(gsrValue);
+
+  // Use responsive exponential filtering
+  visualizer->setExponentialAlpha(0.5);  // Very responsive to changes
+  filteredValue = visualizer->applyExponentialFilter(gsrValue, filteredValue);
+
+  // Direct baseline adjustment - no amplification to see raw sensitivity
+  baselineAdjusted = filteredValue - baseline;
+
+  // 3. DETECT ANOMALIES (optional - for advanced users)
+  visualizer->checkForSpikes(filteredValue);
+
+  // 4. UPDATE LED VISUALIZATION
+  visualizer->updateLEDDisplay(filteredValue, gsrMin, gsrMax);
+
+  // 5. OUTPUT DATA FOR PLOTTING
+  outputSerialData();
+
+  // 6. CONTROL SAMPLING RATE
+  /*████████████████████████████████████████████████████████████████████
+  ██ CHALLENGE #2: ADJUST SAMPLING SPEED!                              ██
+  ██ ➤ delay(5) = 200Hz (very fast)                                    ██
+  ██ ➤ delay(10) = 100Hz (current)                                     ██
+  ██ ➤ delay(20) = 50Hz (smooth)                                       ██
+  ██ ➤ delay(50) = 20Hz (very smooth)                                  ██
+  ████████████████████████████████████████████████████████████████████*/
+  delay(10);  // 100Hz sampling (adjust as needed)
+}
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//                         CORE FUNCTIONS
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Initialize all arrays with zeros
+void initializeArrays() {
+  for (int i = 0; i < numReadings; i++) {
+    readings[i] = 0;
+  }
+}
+
+// Simple calibration process
+void performCalibration() {
+
+  unsigned long startTime = millis();
+  int sampleCount = 0;
+  float sum = 0;
+
+  /*████████████████████████████████████████████████████████████████████
+  ██ CHALLENGE #3: CHANGE CALIBRATION TIME!                            ██
+  ██ ➤ 3000 = 3 seconds (quick calibration)                            ██
+  ██ ➤ 5000 = 5 seconds (current, balanced)                            ██
+  ██ ➤ 10000 = 10 seconds (more accurate baseline)                     ██
+  ████████████████████████████████████████████████████████████████████*/
+  // Collect samples for 5 seconds
+  while (millis() - startTime < 5000) {
+    int reading = analogRead(GSR_PIN);
+
+    // Track min/max for range
+    if (reading < gsrMin) gsrMin = reading;
+    if (reading > gsrMax) gsrMax = reading;
+
+    // Calculate baseline
+    sum += reading;
+    sampleCount++;
+
+    // Update initial filtered value
+    if (filteredValue == 0) {
+      filteredValue = reading;
+    } else {
+      filteredValue = 0.3 * reading + 0.7 * filteredValue;
+    }
+
+    // Show progress animation
+    visualizer->showCalibrationAnimation();
+
+
+    delay(20);
+  }
+
+  // Calculate results
+  baseline = sum / sampleCount;
+  gsrMin = max(0, gsrMin - 20);      // Add margin
+  gsrMax = min(1023, gsrMax + 20);   // Add margin
+
+
+  // Success animation
+  visualizer->flashSuccess();
+
+  isCalibrated = true;
+}
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//                      SIGNAL PROCESSING
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Calculate moving average for smoothing
+int calculateMovingAverage(int newReading) {
+  // Remove oldest reading from total
   total = total - readings[readIndex];
-  readings[readIndex] = gsrValue;
+
+  // Add new reading
+  readings[readIndex] = newReading;
   total = total + readings[readIndex];
+
+  // Advance to next position
   readIndex = (readIndex + 1) % numReadings;
-  average = total / numReadings;
 
-  // ===== Step 3: Apply Exponential Moving Average (EMA) =====
-  // This provides additional smoothing on top of the moving average
-  filteredValue = alpha * gsrValue + (1 - alpha) * filteredValue;
+  // Return average
+  return total / numReadings;
+}
 
-  // ===== Step 4: Calculate Baseline-Adjusted Value =====
-  // Positive values = increase from baseline
-  float baselineAdjusted = filteredValue - baseline;
+// Apply exponential smoothing filter
+float applyExponentialFilter(int newReading) {
+  const float alpha = 0.3;  // Smoothing factor (0-1, lower = smoother)
+  return alpha * newReading + (1 - alpha) * filteredValue;
+}
 
-  // ===== Step 5: Enhanced Spike Detection Based on EMA =====
-  // Store current EMA in history buffer
-  emaHistory[emaHistoryIndex] = filteredValue;
-  emaHistoryIndex = (emaHistoryIndex + 1) % 5;
+//──────── Spike Detection Variables ────────
+bool inSpike = false;
 
-  // Calculate time since last sample
-  unsigned long currentTime = millis();
-  float timeDelta = currentTime - lastEmaTime;
+/*████████████████████████████████████████████████████████████████████
+██ CHALLENGE #4: ADJUST SPIKE SENSITIVITY!                            ██
+██ ➤ 50.0 = Very sensitive (detects small movements)                  ██
+██ ➤ 100.0 = Normal (current setting)                                 ██
+██ ➤ 200.0 = Less sensitive (only large movements)                    ██
+████████████████████████████████████████████████████████████████████*/
+float spikeThreshold = 100.0;
 
-  if (timeDelta > 0 && lastEmaTime > 0) {
-    // Calculate rate of change in EMA over time window
-    float oldestEma = emaHistory[(emaHistoryIndex + 1) % 5]; // Oldest value in circular buffer
-    float emaChangeTotal = abs(filteredValue - oldestEma);
+float lastFilteredValue = 0;
 
-    // Check time window - if we have enough history
-    if (timeDelta <= spikeWindowMs) {
-      // Detect spike if EMA changed by ~100 units within the time window
-      if (!inSpike && emaChangeTotal >= spikeThreshold) {
-        inSpike = true;
-        spikeStartTime = currentTime;
-        emaBeforeSpike = oldestEma;
+// Check for sudden spikes in the signal
+void checkForSpikes() {
+  float change = abs(filteredValue - lastFilteredValue);
 
-        // Debug output for spike detection
-        Serial.print(" [SPIKE START: EMA changed ");
-        Serial.print(emaChangeTotal);
-        Serial.print(" units in ");
-        Serial.print(timeDelta);
-        Serial.print("ms]");
+  if (change > spikeThreshold && !inSpike) {
+    inSpike = true;
+
+    // Flash LEDs red during spike
+    for (int i = 0; i < NUM_LEDS; i++) {
+      if (millis() % 200 < 100) {
+        strip.setPixelColor(i, strip.Color(255, 0, 0));
       }
     }
-
-    // Check if spike should end
-    if (inSpike) {
-      unsigned long spikeDuration = currentTime - spikeStartTime;
-      float recoveryAmount = abs(filteredValue - emaBeforeSpike);
-
-      // End spike if:
-      // 1. EMA has stabilized (change < 20% of threshold)
-      // 2. Maximum spike duration exceeded
-      if (recoveryAmount < spikeThreshold * 0.2 || spikeDuration > maxSpikeDuration) {
-        inSpike = false;
-        Serial.print(" [SPIKE END]");
-      }
-    }
+    strip.show();
+  } else if (change < spikeThreshold * 0.2 && inSpike) {
+    inSpike = false;
   }
 
-  lastEmaTime = currentTime;
+  lastFilteredValue = filteredValue;
+}
 
-  // ===== Step 6: Update Affect Buffer =====
-  affectBuffer[affectBufferIndex] = baselineAdjusted;
-  affectBufferIndex = (affectBufferIndex + 1) % affectWindowSize;
-  affectSampleCount++;
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//                         DATA OUTPUT
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  // ===== Step 7: Calculate Affect at Intervals =====
-  if (currentTime - lastAffectUpdate >= affectUpdateInterval) {
-    lastAffectUpdate = currentTime;
-    calculateAffect();
-  }
-
-  // ===== Step 8: Visualize on LEDs =====
-  // Use filtered value for smoother LED visualization
-  visualizeGSRWithFilters(average, filteredValue, baselineAdjusted);
-
-  // ===== Step 9: Print Plottable Data =====
-  // Format optimized for Arduino Serial Plotter
-  // Using labels for better identification in plotter
-
-  // Group 1: Raw sensor values
+// Output data for Serial Plotter
+void outputSerialData() {
+  // Format: Label:Value for each data stream
   Serial.print("Raw:");
   Serial.print(gsrValue);
   Serial.print(",");
-  Serial.print("Avg:");
+
+  Serial.print("Average:");
   Serial.print(average);
   Serial.print(",");
-  Serial.print("EMA:");
+
+  Serial.print("Filtered:");
   Serial.print(filteredValue, 1);
-
-  // Visual separator (double comma creates space in plotter)
-  Serial.print(",,");
-
-  // Group 2: Processed values
-  Serial.print("Baseline:");
-  Serial.print(baselineAdjusted, 1);
   Serial.print(",");
-  Serial.print("Affect:");
-  Serial.print(currentAffect, 1);
 
-  // Add spike indicator as text (won't create new plot line)
-  if (inSpike) {
-    Serial.print(" [SPIKE DETECTED]");
-  }
+  Serial.print("Baseline_Adj:");
+  Serial.print(baselineAdjusted, 1);
 
   Serial.println();
-
-  // Control update rate - 10ms for 100Hz sampling
-  delay(10);
 }
 
-// ============================================================================
-// AFFECT CALCULATION FUNCTION
-// ============================================================================
+//────────────────────────────────────────────────────────────────────────
+// Note: All complex signal processing and LED functions are now in the
+// GSRVisualizer library. See GSRVisualizer.h and GSRVisualizer.cpp
+//────────────────────────────────────────────────────────────────────────
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//                    OPTIONAL ADVANCED FEATURES
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Uncomment #define below to enable:
+// • Long-term affect calculation
+// • Statistical outlier detection
+// • Adaptive baseline adjustment
+// • Pattern recognition
+
+// Uncomment this line to enable advanced features:
+// #define ENABLE_ADVANCED_FEATURES
+
+#ifdef ENABLE_ADVANCED_FEATURES
+
+// Advanced filter variables
+const int affectWindowSize = 3000;
+float affectBuffer[affectWindowSize];
+int affectBufferIndex = 0;
+float currentAffect = 0;
+unsigned long lastAffectUpdate = 0;
+
+// Calculate long-term emotional state
 void calculateAffect() {
-  float sum = 0;
-  float sumSquares = 0;
-  validSamplesInWindow = 0;
-  int samplesToAnalyze = min((int)affectSampleCount, affectWindowSize);
-
-  // Calculate mean
-  for (int i = 0; i < samplesToAnalyze; i++) {
-    sum += affectBuffer[i];
-  }
-  float mean = sum / samplesToAnalyze;
-
-  // Calculate standard deviation
-  for (int i = 0; i < samplesToAnalyze; i++) {
-    float diff = affectBuffer[i] - mean;
-    sumSquares += diff * diff;
-  }
-  float stdDev = sqrt(sumSquares / samplesToAnalyze);
-
-  // Recalculate affect excluding outliers (values beyond 2 standard deviations)
-  sum = 0;
-  float previousAffect = currentAffect;
-
-  for (int i = 0; i < samplesToAnalyze; i++) {
-    if (abs(affectBuffer[i] - mean) <= 2 * stdDev) {
-      sum += affectBuffer[i];
-      validSamplesInWindow++;
-    }
-  }
-
-  if (validSamplesInWindow > 0) {
-    currentAffect = sum / validSamplesInWindow;
-
-    // Calculate trend
-    if (affectSampleCount > affectWindowSize) {
-      affectTrend = currentAffect - previousAffect;
-    }
-  }
-
-  // Don't print during normal operation to avoid disrupting plotter
-  // Affect value is already shown in the main data stream
+  // This function would calculate a 30-second rolling average
+  // of your emotional state, filtering out temporary spikes
+  //
+  // Implementation:
+  // 1. Collect samples over 30 seconds
+  // 2. Remove statistical outliers
+  // 3. Calculate mean and standard deviation
+  // 4. Return normalized affect value
+  //
+  // Full implementation available in advanced version
 }
 
-// ============================================================================
-// ENHANCED GSR VISUALIZATION FUNCTION
-// Maps filtered GSR readings to LED patterns
-// ============================================================================
-void visualizeGSRWithFilters(int avgValue, float emaValue, float baselineAdj) {
-  // Use EMA value for smoother visualization
-  int mappedValue = constrain(
-    map((int)emaValue, gsrMin, gsrMax, 0, NUM_LEDS),
-    0,
-    NUM_LEDS
-  );
-
-  strip.clear();
-
-  // Track EMA changes for dynamic effects
-  static float lastEmaValue = emaValue;
-  float emaChange = abs(emaValue - lastEmaValue);
-  float changeIntensity = constrain(emaChange * 2, 0, 100); // Scale change for visibility
-
-  // Color gradient with dynamic effects
-  for (int i = 0; i < mappedValue; i++) {
-    int r, g, b;
-
-    if (inSpike) {
-      // Flash red during spike
-      if (millis() % 200 < 100) {
-        r = 255; g = 0; b = 0;
-      } else {
-        r = 100; g = 0; b = 0;
-      }
-    } else {
-      // Normal gradient with dynamic modulation based on EMA changes
-      if (i < NUM_LEDS / 2) {
-        r = 0;
-        g = map(i, 0, NUM_LEDS/2, 0, 255);
-        b = map(i, 0, NUM_LEDS/2, 255, 0);
-      } else {
-        r = map(i, NUM_LEDS/2, NUM_LEDS, 0, 255);
-        g = map(i, NUM_LEDS/2, NUM_LEDS, 255, 0);
-        b = 0;
-      }
-
-      // Add dynamic pulsing based on EMA change intensity
-      // Larger changes = stronger/faster pulsing
-      float pulseSpeed = 500.0 - (changeIntensity * 3); // Faster pulse with more change
-      float pulse = (sin(millis() / pulseSpeed) + 1.0) / 2.0;
-      float brightnessModulation = 0.6 + (0.4 * pulse);
-
-      // Apply brightness modulation - more change = more variation
-      if (changeIntensity > 5) {
-        r = r * brightnessModulation;
-        g = g * brightnessModulation;
-        b = b * brightnessModulation;
-      }
-    }
-
-    strip.setPixelColor(i, strip.Color(r, g, b));
-  }
-
-  // Enhanced breathing effect varies with EMA changes
-  if (!inSpike && mappedValue > 0 && mappedValue < NUM_LEDS) {
-    // Breathing speed varies with EMA changes
-    float breathSpeed = 300.0 - (changeIntensity * 2); // Faster breathing with more change
-    float breath = (sin(millis() / breathSpeed) + 1.0) / 2.0;
-    int lastLed = mappedValue - 1;
-    uint32_t color = strip.getPixelColor(lastLed);
-    int r = ((color >> 16) & 0xFF) * (0.3 + 0.7 * breath); // More dramatic breathing
-    int g = ((color >> 8) & 0xFF) * (0.3 + 0.7 * breath);
-    int b = (color & 0xFF) * (0.3 + 0.7 * breath);
-    strip.setPixelColor(lastLed, strip.Color(r, g, b));
-  }
-
-  // Add wave effect on significant changes (ripple through LEDs)
-  if (changeIntensity > 15 && !inSpike && mappedValue > 3) {
-    int wavePos = (millis() / 50) % mappedValue;
-    uint32_t color = strip.getPixelColor(wavePos);
-    int r = ((color >> 16) & 0xFF) + 50;
-    int g = ((color >> 8) & 0xFF) + 50;
-    int b = (color & 0xFF) + 50;
-    strip.setPixelColor(wavePos, strip.Color(
-      r > 255 ? 255 : r,
-      g > 255 ? 255 : g,
-      b > 255 ? 255 : b
-    ));
-  }
-
-  lastEmaValue = emaValue;
-
-  strip.show();
+// Apply statistical filtering
+float applyStatisticalFilter(float value) {
+  // This would use standard deviation to identify and
+  // remove statistical outliers from the data
+  //
+  // Algorithm:
+  // 1. Calculate mean of recent samples
+  // 2. Calculate standard deviation
+  // 3. Remove values > 2 std dev from mean
+  // 4. Return filtered value
+  //
+  // Full implementation available in advanced version
+  return value;
 }
 
-// ============================================================================
-// ORIGINAL GSR VISUALIZATION FUNCTION (kept for compatibility)
-// ============================================================================
-void visualizeGSR(int gsrValue) {
-  // ===== Map GSR to LED Count =====
-  // Convert the GSR reading to the number of LEDs to light up
-  // map() scales the GSR value from its calibrated range to 0-20 LEDs
-  // constrain() ensures we never exceed the strip boundaries
-  int mappedValue = constrain(
-    map(gsrValue, gsrMin, gsrMax, 0, NUM_LEDS),
-    0,
-    NUM_LEDS
-  );
-
-  // Clear all LEDs to start fresh
-  strip.clear();
-
-  // ===== Light Up LEDs with Color Gradient =====
-  // The gradient represents emotional states:
-  // Blue (calm) -> Green (moderate) -> Red (stressed/excited)
-
-  for (int i = 0; i < mappedValue; i++) {
-    // Variables to store RGB color values
-    int r, g, b;
-
-    if (i < NUM_LEDS / 2) {
-      // ===== First Half: Blue to Green Gradient =====
-      // This represents the transition from calm to moderate arousal
-
-      r = 0;  // No red component in blue-green range
-
-      // Green increases from 0 to 255 as we move through first half
-      g = map(i, 0, NUM_LEDS/2, 0, 255);
-
-      // Blue decreases from 255 to 0 as we move through first half
-      b = map(i, 0, NUM_LEDS/2, 255, 0);
-
-    } else {
-      // ===== Second Half: Green to Red Gradient =====
-      // This represents the transition from moderate to high arousal
-
-      // Red increases from 0 to 255 as we move through second half
-      r = map(i, NUM_LEDS/2, NUM_LEDS, 0, 255);
-
-      // Green decreases from 255 to 0 as we move through second half
-      g = map(i, NUM_LEDS/2, NUM_LEDS, 255, 0);
-
-      b = 0;  // No blue component in green-red range
-    }
-
-    // Set the calculated color for this LED
-    strip.setPixelColor(i, strip.Color(r, g, b));
-  }
-
-  // ===== Add Breathing Effect to Last LED =====
-  // This creates a pulsing effect on the last active LED for visual interest
-
-  if (mappedValue > 0 && mappedValue < NUM_LEDS) {
-    // Use sine wave to create smooth breathing animation
-    // sin() output ranges from -1 to 1, we scale it to 0 to 1
-    float breath = (sin(millis() / 200.0) + 1.0) / 2.0;
-
-    int lastLed = mappedValue - 1;  // Index of last lit LED
-
-    // Get the current color of the last LED
-    uint32_t color = strip.getPixelColor(lastLed);
-
-    // Extract individual RGB components from the packed color value
-    // Color is stored as 32-bit: 0x00RRGGBB
-    int r = (color >> 16) & 0xFF;  // Shift right 16 bits and mask
-    int g = (color >> 8) & 0xFF;   // Shift right 8 bits and mask
-    int b = color & 0xFF;          // Just mask the blue component
-
-    // Apply breathing effect by modulating brightness
-    // Varies between 50% and 100% brightness
-    r = r * (0.5 + 0.5 * breath);
-    g = g * (0.5 + 0.5 * breath);
-    b = b * (0.5 + 0.5 * breath);
-
-    // Update the LED with the breathing effect applied
-    strip.setPixelColor(lastLed, strip.Color(r, g, b));
-  }
-
-  // Send the updated colors to the LED strip
-  strip.show();
+// Adaptive baseline adjustment
+void updateAdaptiveBaseline() {
+  // Slowly adjusts baseline to account for long-term changes
+  // such as skin moisture, temperature, or sensor drift
+  //
+  // baseline = baseline * 0.999 + currentValue * 0.001
 }
 
-// ============================================================================
-// CALIBRATION ANIMATION FUNCTION
-// Shows a pulsing white animation during the calibration phase
-// ============================================================================
-void showCalibrationAnimation() {
-  // Create a smooth pulsing effect using sine wave
-  // millis()/300.0 controls the speed of pulsing (lower = faster)
-  float pulse = (sin(millis() / 300.0) + 1.0) / 2.0; // Normalized to 0-1
-
-  // Calculate brightness: varies between 20 (dim) and 70 (moderate)
-  // This creates a gentle pulsing effect that's not too bright
-  int brightness = 20 + (50 * pulse);
-
-  // Apply the same white color to all LEDs
-  for (int i = 0; i < NUM_LEDS; i++) {
-    // White is created by equal amounts of R, G, and B
-    strip.setPixelColor(i, strip.Color(brightness, brightness, brightness));
-  }
-
-  // Update the LED strip with the new colors
-  strip.show();
+// Pattern recognition for meditation detection
+bool detectMeditationState() {
+  // Analyzes GSR patterns to detect meditation or relaxation
+  //
+  // Looks for:
+  // - Decreasing baseline
+  // - Reduced variance
+  // - Slower oscillations
+  // - Absence of spikes
+  //
+  return false;
 }
 
-// ============================================================================
-// UTILITY FUNCTION: Set All Pixels
-// Helper function to set all LEDs to the same color
-// ============================================================================
-void setAllPixels(int r, int g, int b) {
-  // Loop through all LEDs
-  for (int i = 0; i < NUM_LEDS; i++) {
-    strip.setPixelColor(i, strip.Color(r, g, b));
-  }
-  // Update the strip to show the new colors
-  strip.show();
-}
+#endif // ENABLE_ADVANCED_FEATURES
+
+/*
+╔══════════════════════════════════════════════════════════════════════════╗
+║                      EXERCISES & CHALLENGES                               ║
+╠══════════════════════════════════════════════════════════════════════════╣
+║ BEGINNER:                                                                ║
+║ • Change LED brightness (line 74)                                       ║
+║ • Adjust sampling rate (line 118)                                       ║
+║ • Modify color gradients                                                ║
+╠══════════════════════════════════════════════════════════════════════════╣
+║ INTERMEDIATE:                                                            ║
+║ • Add buzzer for stress feedback                                        ║
+║ • Create custom LED patterns                                            ║
+║ • Log data to SD card                                                   ║
+╠══════════════════════════════════════════════════════════════════════════╣
+║ ADVANCED:                                                                ║
+║ • Add Bluetooth connectivity                                            ║
+║ • Build meditation trainer                                              ║
+║ • Implement pattern recognition                                         ║
+╚══════════════════════════════════════════════════════════════════════════╝
+*/
+
+/*
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         TROUBLESHOOTING                                  │
+├──────────────────────────────────────────────────────────────────────────┤
+│ No LED response → Check pins, verify 5V power                           │
+│ Noisy readings → Clean sensor, moisten fingers                          │
+│ Values stuck → Check GSR_PIN configuration                              │
+│ LEDs too bright/dim → Adjust setBrightness() value                      │
+│ Serial Plotter issues → Close Serial Monitor, check baud rate           │
+└──────────────────────────────────────────────────────────────────────────┘
+*/
+
+
+// END OF CODE

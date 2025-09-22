@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ESP32 Bridge - Fixed Version</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: black;
+        }
+        
+        #debug-panel {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 10px;
+            border: 1px solid #333;
+            max-width: 300px;
+        }
+        
+        .status-good { color: #00ff00; }
+        .status-bad { color: #ff0000; }
+        .status-warning { color: #ffaa00; }
+    </style>
+</head>
+<body>
+    <div id="debug-panel">
+        <div><strong>🔧 Debug Info</strong></div>
+        <div>Group: <span id="group-info">-</span></div>
+        <div>Server URL: <span id="server-url-info">-</span></div>
+        <div>WebSocket: <span id="ws-status">Disconnected</span></div>
+        <div>ESP32: <span id="esp32-status">Disconnected</span></div>
+        <div>Last Data: <span id="last-data">-</span></div>
+    </div>
+
+    <script>
+        // Configuration
+        // CHANGE THIS NUMBER FOR EACH GROUP (0-4)
+        const NODE_ID = 0;  // ← CHANGE THIS FOR EACH GROUP!
+        
+        // FIXED: Use correct server address and port
+        const SERVER_URL = 'ws://10.31.159.164:3000/ws';  // ✅ CORRECTED!
+        
+        // Group colors (automatically selected based on NODE_ID)
+        const NODE_COLORS = [
+            [255, 0, 0],      // Group 1: Red
+            [0, 255, 0],      // Group 2: Green
+            [0, 100, 255],    // Group 3: Blue
+            [255, 165, 0],    // Group 4: Orange
+            [147, 112, 219]   // Group 5: Purple
+        ];
+        
+        // LED settings
+        const NUM_LEDS = 30;
+        const LED_SIZE = 8;
+        const LED_SPACING = 20;
+        
+        // State variables
+        let ledStrip = [];
+        let upDataStream = 0;
+        let downDataStream = 0;
+        let currentGSR = 0;
+        let lastGSRTime = 0;
+        let gsrBaseline = 3200;
+        
+        // Animation variables
+        let upAnimationPosition = -5;
+        let downAnimationPosition = -5;
+        let lastAnimationTime = 0;
+        let trailLength = 5;
+        let upAnimationSpeed = 0;
+        let downAnimationSpeed = 0;
+        let simulatedGSR = 3200;
+        let simulatedServerData = 0;
+        
+        // Control states - FIXED: Clear separation
+        let espConnected = false;        // ESP32 simulation state
+        let wsConnected = false;         // Actual WebSocket connection state
+        let wsRegistered = false;        // Registration confirmation
+        
+        // Serial port variables
+        let serialPort = null;
+        let reader = null;
+        
+        // WebSocket variable
+        let ws = null;
+        
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+            textAlign(CENTER, CENTER);
+            
+            // Initialize LEDs
+            for (let i = 0; i < NUM_LEDS; i++) {
+                ledStrip.push({
+                    brightness: 0,
+                    targetBrightness: 0,
+                    color: [0, 0, 0]
+                });
+            }
+            
+            // Update debug panel
+            updateDebugPanel();
+            
+            console.log(`🚀 Client initialized for Group ${NODE_ID + 1}`);
+            console.log(`🔌 Server URL: ${SERVER_URL}`);
+        }
+        
+        function updateDebugPanel() {
+            document.getElementById('group-info').textContent = `${NODE_ID + 1} (${['RED', 'GREEN', 'BLUE', 'ORANGE', 'PURPLE'][NODE_ID]})`;
+            document.getElementById('server-url-info').textContent = SERVER_URL;
+            
+            const wsStatus = document.getElementById('ws-status');
+            if (wsConnected && wsRegistered) {
+                wsStatus.textContent = 'Connected & Registered';
+                wsStatus.className = 'status-good';
+            } else if (wsConnected) {
+                wsStatus.textContent = 'Connected (registering...)';
+                wsStatus.className = 'status-warning';
+            } else {
+                wsStatus.textContent = 'Disconnected';
+                wsStatus.className = 'status-bad';
+            }
+            
+            const esp32Status = document.getElementById('esp32-status');
+            if (serialPort && serialPort.readable) {
+                esp32Status.textContent = 'Real Device Connected';
+                esp32Status.className = 'status-good';
+            } else if (espConnected) {
+                esp32Status.textContent = 'Simulation Mode';
+                esp32Status.className = 'status-warning';
+            } else {
+                esp32Status.textContent = 'Disconnected';
+                esp32Status.className = 'status-bad';
+            }
+            
+            document.getElementById('last-data').textContent = currentGSR > 0 ? currentGSR.toFixed(1) : '-';
+        }
+        
+        function draw() {
+            background(0);
+            
+            // Update debug panel every 30 frames
+            if (frameCount % 30 === 0) {
+                updateDebugPanel();
+            }
+            
+            // Calculate LED strip positions
+            let stripX = width / 2;
+            let stripHeight = NUM_LEDS * LED_SPACING;
+            let stripTop = height/2 - stripHeight/2;
+            let stripBottom = height/2 + stripHeight/2;
+            
+            // Draw vertical line (LED strip backbone)
+            stroke(30);
+            strokeWeight(1);
+            line(stripX, stripTop, stripX, stripBottom);
+            
+            // Draw LEDs
+            for (let i = 0; i < NUM_LEDS; i++) {
+                let y = stripTop + i * LED_SPACING + LED_SPACING/2;
+                drawLED(stripX, y, i);
+            }
+            
+            // Draw terminals - FIXED: Use correct connection states
+            let realESP32Connected = serialPort && serialPort.readable;
+            drawTerminal(stripX, stripTop - 40, 'SERVER', wsConnected && wsRegistered);  // ✅ Use actual WebSocket status
+            drawTerminal(stripX, stripBottom + 40, 'ESP32', espConnected || realESP32Connected);
+            
+            // Generate data streams
+            updateDataStreams();
+            
+            // Update LED trail animation
+            updateLEDTrails(stripTop, stripBottom);
+            
+            // Update LED brightness
+            for (let i = 0; i < NUM_LEDS; i++) {
+                let led = ledStrip[i];
+                led.brightness = lerp(led.brightness, led.targetBrightness, 0.3);
+                
+                if (led.targetBrightness > 0) {
+                    led.targetBrightness *= 0.92;
+                }
+                
+                if (led.brightness < 0.01) led.brightness = 0;
+                if (led.targetBrightness < 0.01) led.targetBrightness = 0;
+            }
+            
+            // Draw control panel
+            let realESP32 = serialPort && serialPort.readable;
+            drawControlPanel(realESP32);
+            
+            // Draw node info with group color indicator
+            push();
+            let groupColor = NODE_COLORS[NODE_ID];
+            fill(groupColor[0], groupColor[1], groupColor[2]);
+            textSize(36);
+            text('G' + (NODE_ID + 1), width - 100, height/2 - 40);
+            
+            // Show group name
+            textSize(12);
+            let groupNames = ['RED', 'GREEN', 'BLUE', 'ORANGE', 'PURPLE'];
+            text(groupNames[NODE_ID], width - 100, height/2 - 15);
+            
+            fill(150);
+            textSize(12);
+            text('↑ ' + floor(upDataStream), width - 100, height/2 + 5);
+            text('↓ ' + floor(downDataStream), width - 100, height/2 + 25);
+            
+            // Show WebSocket connection status
+            if (wsConnected && wsRegistered) {
+                fill(0, 255, 0);
+                text('WS: CONNECTED', width - 100, height/2 + 45);
+            } else if (wsConnected) {
+                fill(255, 165, 0);
+                text('WS: REGISTERING', width - 100, height/2 + 45);
+            } else {
+                fill(255, 0, 0);
+                text('WS: DISCONNECTED', width - 100, height/2 + 45);
+            }
+            pop();
+        }
+        
+        function drawLED(x, y, index) {
+            let led = ledStrip[index];
+            
+            // Draw base dot
+            noStroke();
+            fill(20);
+            circle(x, y, LED_SIZE * 0.5);
+            
+            // Draw glow if active
+            if (led.brightness > 0.01) {
+                fill(led.color[0], led.color[1], led.color[2], led.brightness * 8);
+                circle(x, y, LED_SIZE * 8);
+                
+                fill(led.color[0], led.color[1], led.color[2], led.brightness * 25);
+                circle(x, y, LED_SIZE * 4);
+                
+                fill(led.color[0], led.color[1], led.color[2], led.brightness * 255);
+                circle(x, y, LED_SIZE * 1.2);
+            }
+        }
+        
+        function drawTerminal(x, y, label, connected) {
+            push();
+            translate(x, y);
+            
+            // Status dot
+            noStroke();
+            fill(connected ? 0 : 255, connected ? 255 : 0, 0);
+            circle(0, 0, 12);
+            
+            // Label
+            fill(200);
+            textSize(11);
+            text(label, 0, label === 'SERVER' ? -20 : 20);
+            
+            fill(100);
+            textSize(9);
+            text(connected ? 'CONNECTED' : 'DISCONNECTED', 0, label === 'SERVER' ? 20 : -20);
+            
+            pop();
+        }
+        
+        function updateDataStreams() {
+            let esp32Active = (serialPort && serialPort.readable) || espConnected;
+            
+            // Upward stream (ESP32 → Server)
+            if (esp32Active) {
+                simulatedGSR += random(-50, 50);
+                simulatedGSR = constrain(simulatedGSR, 2800, 3800);
+                let deviation = abs(simulatedGSR - gsrBaseline);
+                let normalizedDeviation = map(deviation, 0, 300, 0, 1);
+                upAnimationSpeed = 1 + normalizedDeviation * 6;
+                upDataStream = simulatedGSR;
+                currentGSR = simulatedGSR;
+                
+                // Send data to server if connected and registered
+                if (wsConnected && wsRegistered) {
+                    // Send data every 200ms
+                    if (frameCount % 12 === 0) {  // ~200ms at 60fps
+                        ws.send(JSON.stringify({
+                            type: 'gsr_data',
+                            nodeId: NODE_ID,
+                            groupId: NODE_ID + 1,
+                            ema: currentGSR,
+                            timestamp: Date.now()
+                        }));
+                    }
+                }
+            } else {
+                upAnimationSpeed *= 0.95;
+                upDataStream *= 0.95;
+                if (upDataStream < 50) upDataStream = 0;
+            }
+            
+            // Downward stream (Server → ESP32) - based on actual WebSocket connection
+            if (wsConnected && wsRegistered) {
+                simulatedServerData += random(-30, 30);
+                simulatedServerData = constrain(simulatedServerData, 100, 400);
+                downAnimationSpeed = 2 + (simulatedServerData / 400) * 4;
+                downDataStream = simulatedServerData;
+            } else {
+                downAnimationSpeed *= 0.95;
+                downDataStream *= 0.95;
+                if (downDataStream < 50) downDataStream = 0;
+            }
+        }
+        
+        function updateLEDTrails(stripTop, stripBottom) {
+            let esp32Active = (serialPort && serialPort.readable) || espConnected;
+            
+            if ((!esp32Active && !wsConnected) || ledStrip.length === 0) {
+                return;
+            }
+            
+            let currentTime = millis();
+            
+            if (lastAnimationTime === 0 || currentTime - lastAnimationTime > 1000) {
+                lastAnimationTime = currentTime;
+                return;
+            }
+            
+            let deltaTime = (currentTime - lastAnimationTime) / 1000.0;
+            deltaTime = constrain(deltaTime, 0, 0.1);
+            lastAnimationTime = currentTime;
+            
+            // Update animations
+            if (upAnimationSpeed > 0.1) {
+                upAnimationPosition += upAnimationSpeed * deltaTime * 2;
+                if (upAnimationPosition > NUM_LEDS + trailLength) {
+                    upAnimationPosition = -trailLength;
+                }
+            }
+            
+            if (downAnimationSpeed > 0.1) {
+                downAnimationPosition += downAnimationSpeed * deltaTime * 2;
+                if (downAnimationPosition > NUM_LEDS + trailLength) {
+                    downAnimationPosition = -trailLength;
+                }
+            }
+            
+            // Clear LEDs
+            for (let i = 0; i < NUM_LEDS; i++) {
+                ledStrip[i].targetBrightness = 0;
+            }
+            
+            // Draw trails
+            if (upAnimationSpeed > 0.1) {
+                let groupColor = NODE_COLORS[NODE_ID];
+                drawUpwardTrail(upAnimationPosition, groupColor);
+            }
+            
+            if (downAnimationSpeed > 0.1) {
+                drawDownwardTrail(downAnimationPosition, [0, 255, 255]);
+            }
+        }
+        
+        function drawUpwardTrail(animPos, color) {
+            for (let i = 0; i < NUM_LEDS; i++) {
+                let distance = animPos - (NUM_LEDS - 1 - i);
+                
+                if (distance >= 0 && distance <= trailLength) {
+                    let intensity = 1.0 - (distance / trailLength);
+                    intensity = intensity * intensity;
+                    
+                    if (intensity > ledStrip[i].targetBrightness) {
+                        ledStrip[i].targetBrightness = intensity;
+                        ledStrip[i].color = color;
+                    }
+                }
+            }
+        }
+        
+        function drawDownwardTrail(animPos, color) {
+            for (let i = 0; i < NUM_LEDS; i++) {
+                let distance = animPos - i;
+                
+                if (distance >= 0 && distance <= trailLength) {
+                    let intensity = 1.0 - (distance / trailLength);
+                    intensity = intensity * intensity;
+                    
+                    if (intensity > ledStrip[i].targetBrightness) {
+                        ledStrip[i].targetBrightness = intensity;
+                        ledStrip[i].color = color;
+                    }
+                }
+            }
+        }
+        
+        function drawControlPanel(realESP32Connected) {
+            push();
+            fill(0, 0, 0, 200);
+            stroke(80);
+            strokeWeight(1);
+            rect(10, height - 120, 200, 100, 5);
+            
+            // Connection buttons
+            drawButton(20, height - 105, 50, 18, 'ESP32', espConnected || realESP32Connected);
+            drawButton(80, height - 105, 50, 18, 'SERVER', wsConnected && wsRegistered);
+            
+            // Status info
+            fill(120);
+            textAlign(LEFT, TOP);
+            textSize(8);
+            text('GSR: ' + currentGSR.toFixed(1), 20, height - 80);
+            text('WebSocket: ' + (wsConnected ? 'CONN' : 'DISC'), 20, height - 70);
+            text('Registered: ' + (wsRegistered ? 'YES' : 'NO'), 20, height - 60);
+            
+            // Show connection type
+            if (realESP32Connected) {
+                fill(0, 255, 0);
+                text('REAL ESP32', 20, height - 50);
+            } else if (espConnected) {
+                fill(255, 165, 0);
+                text('SIMULATED', 20, height - 50);
+            }
+            
+            pop();
+        }
+        
+        function drawButton(x, y, w, h, label, active) {
+            if (active) {
+                fill(0, 100, 0, 150);
+                stroke(0, 255, 0);
+            } else {
+                fill(40, 40, 40);
+                stroke(100);
+            }
+            
+            strokeWeight(1);
+            rect(x, y, w, h, 3);
+            
+            fill(active ? 255 : 200);
+            textAlign(CENTER, CENTER);
+            textSize(8);
+            text(label, x + w/2, y + h/2);
+        }
+        
+        function mousePressed() {
+            // Check control panel clicks
+            let panelY = height - 120;
+            
+            if (mouseY > panelY && mouseY < height - 20) {
+                // ESP32 button - toggle simulation
+                if (mouseX >= 20 && mouseX <= 70 && mouseY >= height - 105 && mouseY <= height - 87) {
+                    if (!serialPort || !serialPort.readable) {
+                        espConnected = !espConnected;
+                        lastAnimationTime = 0;
+                        console.log('ESP32 simulation:', espConnected ? 'ON' : 'OFF');
+                    }
+                }
+                // SERVER button - toggle WebSocket connection
+                else if (mouseX >= 80 && mouseX <= 130 && mouseY >= height - 105 && mouseY <= height - 87) {
+                    if (wsConnected) {
+                        disconnectWebSocket();
+                    } else {
+                        connectWebSocket();
+                    }
+                }
+            }
+        }
+        
+        // FIXED: WebSocket functions with proper error handling
+        function connectWebSocket() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                console.log('Already connected to WebSocket');
+                return;
+            }
+            
+            try {
+                console.log('🔄 Attempting to connect to:', SERVER_URL);
+                ws = new WebSocket(SERVER_URL);
+                
+                ws.onopen = () => {
+                    console.log('✅ WebSocket connected successfully!');
+                    wsConnected = true;
+                    wsRegistered = false;
+                    
+                    // Register as GSR node
+                    console.log('📝 Registering as Group', NODE_ID + 1, '...');
+                    ws.send(JSON.stringify({
+                        type: 'register',
+                        clientType: 'gsr_node',
+                        nodeId: NODE_ID,
+                        groupId: NODE_ID + 1
+                    }));
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('📨 Received from server:', data);
+                        
+                        if (data.type === 'register_ack') {
+                            console.log('🎉 Registration successful for Group', NODE_ID + 1);
+                            wsRegistered = true;
+                        } else if (data.type === 'server_ack') {
+                            // Server acknowledgment creates downward flow
+                            downDataStream = max(downDataStream, 150);
+                        }
+                    } catch (error) {
+                        console.log('Message parse error:', error);
+                    }
+                };
+                
+                ws.onclose = (event) => {
+                    console.log(`🔌 WebSocket closed (code: ${event.code})`);
+                    wsConnected = false;
+                    wsRegistered = false;
+                    ws = null;
+                };
+                
+                ws.onerror = (error) => {
+                    console.log('❌ WebSocket connection failed!');
+                    console.log('Server URL:', SERVER_URL);
+                    console.log('Check:');
+                    console.log('1. Server is running');
+                    console.log('2. Correct IP address');
+                    console.log('3. Port 3000 is accessible');
+                    console.log('4. Path includes /ws');
+                    
+                    wsConnected = false;
+                    wsRegistered = false;
+                    ws = null;
+                };
+                
+            } catch (error) {
+                console.log('❌ WebSocket creation error:', error);
+                wsConnected = false;
+                wsRegistered = false;
+                ws = null;
+            }
+        }
+        
+        function disconnectWebSocket() {
+            if (ws) {
+                console.log('🔌 Disconnecting WebSocket...');
+                ws.close();
+            }
+            wsConnected = false;
+            wsRegistered = false;
+            ws = null;
+        }
+        
+        function keyPressed() {
+            // Press 'S' to toggle server connection
+            if (key === 's' || key === 'S') {
+                if (wsConnected) {
+                    disconnectWebSocket();
+                } else {
+                    connectWebSocket();
+                }
+            }
+            
+            // Press 'E' to toggle ESP32 simulation
+            if (key === 'e' || key === 'E') {
+                if (!serialPort || !serialPort.readable) {
+                    espConnected = !espConnected;
+                    console.log('ESP32 simulation:', espConnected ? 'ON' : 'OFF');
+                }
+            }
+        }
+        
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+        }
+        
+        // Auto-connect on startup (optional)
+        setTimeout(() => {
+            console.log('🔄 Auto-connecting to server...');
+            connectWebSocket();
+        }, 1000);
+    </script>
+</body>
+</html>
