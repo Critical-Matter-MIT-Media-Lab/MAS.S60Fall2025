@@ -471,7 +471,11 @@ function setup() {
     backgroundParticles.push(new AmbientParticle());
   }
 
+  // Setup button event listeners for simulation
+  setupButtonListeners();
+
   console.log("Visualization system initialized");
+  console.log("💡 Click sensor buttons for simulation/debugging");
 }
 
 function draw() {
@@ -630,6 +634,13 @@ function updateNodeButton(nodeId, connected) {
     } else {
       button.classList.remove("connected");
     }
+
+    // Add simulation indicator
+    if (simulationMode[nodeId]) {
+      button.classList.add("simulated");
+    } else {
+      button.classList.remove("simulated");
+    }
   }
 }
 
@@ -653,6 +664,117 @@ function updateUI() {
   document.getElementById("chaos-level").textContent = chaosLevel;
 }
 
+// Simulation state for debugging
+let simulationMode = Array(NUM_NODES).fill(false);
+let simulatedValues = Array(NUM_NODES).fill(0);
+
+function setupButtonListeners() {
+  // Add click listeners to sensor buttons
+  document.querySelectorAll(".node-btn").forEach((btn, index) => {
+    btn.addEventListener("click", function () {
+      const nodeId = parseInt(this.dataset.node);
+      toggleSimulation(nodeId);
+    });
+  });
+}
+
+function toggleSimulation(nodeId) {
+  if (nodeId >= 0 && nodeId < NUM_NODES) {
+    simulationMode[nodeId] = !simulationMode[nodeId];
+
+    if (simulationMode[nodeId]) {
+      // Turn on simulation for this node
+      console.log(`🟢 Simulation ON for sensor ${nodeId + 1}`);
+
+      // Set initial simulated value
+      simulatedValues[nodeId] = random(300, 800);
+
+      // Update node state
+      nodes[nodeId].updateData(simulatedValues[nodeId], true);
+      sensorData[nodeId].connected = true;
+      sensorData[nodeId].value = simulatedValues[nodeId];
+      sensorData[nodeId].lastUpdate = new Date();
+
+      // Update button visual state
+      updateNodeButton(nodeId, true);
+
+      // Start simulation data generation
+      startNodeSimulation(nodeId);
+    } else {
+      // Turn off simulation for this node
+      console.log(`🔴 Simulation OFF for sensor ${nodeId + 1}`);
+
+      // Update node state
+      nodes[nodeId].updateData(0, false);
+      sensorData[nodeId].connected = false;
+      sensorData[nodeId].value = 0;
+
+      // Update button visual state
+      updateNodeButton(nodeId, false);
+
+      // Stop simulation
+      stopNodeSimulation(nodeId);
+    }
+  }
+}
+
+// Store simulation intervals
+let simulationIntervals = {};
+
+function startNodeSimulation(nodeId) {
+  // Clear existing interval if any
+  if (simulationIntervals[nodeId]) {
+    clearInterval(simulationIntervals[nodeId]);
+  }
+
+  // Create different simulation patterns for each sensor
+  simulationIntervals[nodeId] = setInterval(() => {
+    if (simulationMode[nodeId]) {
+      let newValue;
+      const time = millis() * 0.001;
+
+      // Different patterns for each sensor
+      switch (nodeId) {
+        case 0: // Sine wave
+          newValue = 500 + 300 * sin(time * 0.5);
+          break;
+        case 1: // Random walk
+          simulatedValues[nodeId] += random(-50, 50);
+          newValue = constrain(simulatedValues[nodeId], 100, 900);
+          break;
+        case 2: // Pulse pattern
+          newValue = random() > 0.8 ? random(700, 900) : random(200, 400);
+          break;
+        case 3: // Sawtooth
+          newValue = ((time * 100) % 600) + 200;
+          break;
+        case 4: // Heartbeat pattern
+          let heartbeat = sin(time * 2) > 0.7 ? 800 : 400;
+          newValue = heartbeat + random(-50, 50);
+          break;
+        default:
+          newValue = random(200, 800);
+      }
+
+      simulatedValues[nodeId] = newValue;
+
+      // Update node
+      nodes[nodeId].updateData(newValue, true);
+      sensorData[nodeId].value = newValue;
+      sensorData[nodeId].lastUpdate = new Date();
+
+      console.log(`📊 Simulated sensor ${nodeId + 1}: ${newValue.toFixed(1)}`);
+    }
+  }, 200 + random(100)); // Vary interval slightly
+}
+
+function stopNodeSimulation(nodeId) {
+  if (simulationIntervals[nodeId]) {
+    clearInterval(simulationIntervals[nodeId]);
+    delete simulationIntervals[nodeId];
+  }
+}
+
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 
@@ -666,5 +788,34 @@ function windowResized() {
     let radiusVariation = radius + random(-25, 25);
     nodes[i].x = centerX + cos(angle) * radiusVariation;
     nodes[i].y = centerY + sin(angle) * radiusVariation;
+  }
+}
+
+// Keyboard shortcuts for quick testing
+function keyPressed() {
+  // Press number keys 1-5 to toggle simulation for each sensor
+  if (key >= "1" && key <= "5") {
+    const nodeId = parseInt(key) - 1;
+    toggleSimulation(nodeId);
+  }
+
+  // Press 'A' to turn on all simulations
+  if (key === "a" || key === "A") {
+    console.log("🟢 Turning ON all simulations");
+    for (let i = 0; i < NUM_NODES; i++) {
+      if (!simulationMode[i]) {
+        toggleSimulation(i);
+      }
+    }
+  }
+
+  // Press 'X' to turn off all simulations
+  if (key === "x" || key === "X") {
+    console.log("🔴 Turning OFF all simulations");
+    for (let i = 0; i < NUM_NODES; i++) {
+      if (simulationMode[i]) {
+        toggleSimulation(i);
+      }
+    }
   }
 }

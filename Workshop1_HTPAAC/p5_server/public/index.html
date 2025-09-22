@@ -164,6 +164,42 @@
             text-transform: uppercase;
             opacity: 0.7;
         }
+        
+        #debug-info {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 10px;
+            font-weight: 200;
+            text-align: right;
+            opacity: 0.8;
+        }
+        
+        .debug-line {
+            margin: 2px 0;
+        }
+        
+        .simulation-indicator {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            width: 12px;
+            height: 12px;
+            background: rgba(255, 165, 0, 0.8);
+            border-radius: 50%;
+            display: none;
+            animation: blink 1s infinite;
+        }
+        
+        .node-btn.simulated .simulation-indicator {
+            display: block;
+        }
+        
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
     </style>
 </head>
 <body>
@@ -187,23 +223,37 @@
         <div class="node-btn" data-node="0">
             <div>1</div>
             <div class="node-label">Sensor</div>
+            <div class="simulation-indicator"></div>
         </div>
         <div class="node-btn" data-node="1">
             <div>2</div>
             <div class="node-label">Sensor</div>
+            <div class="simulation-indicator"></div>
         </div>
         <div class="node-btn" data-node="2">
             <div>3</div>
             <div class="node-label">Sensor</div>
+            <div class="simulation-indicator"></div>
         </div>
         <div class="node-btn" data-node="3">
             <div>4</div>
             <div class="node-label">Sensor</div>
+            <div class="simulation-indicator"></div>
         </div>
         <div class="node-btn" data-node="4">
             <div>5</div>
             <div class="node-label">Sensor</div>
+            <div class="simulation-indicator"></div>
         </div>
+    </div>
+    
+    <div id="debug-info">
+        <div class="debug-line">💡 <strong>Debug Controls:</strong></div>
+        <div class="debug-line">Click buttons: Toggle simulation</div>
+        <div class="debug-line">Keys 1-5: Toggle individual sensors</div>
+        <div class="debug-line">Key A: Turn on all simulations</div>
+        <div class="debug-line">Key X: Turn off all simulations</div>
+        <div class="debug-line">🟠 Orange dot = Simulation mode</div>
     </div>
 
     <main></main>
