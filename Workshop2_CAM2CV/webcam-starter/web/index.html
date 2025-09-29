@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- index.html - Entry point for the MASS60 p5.js visual playground -->
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MASS60 CV Workshop - p5.js Visuals</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/p5@1.9.2/lib/p5.min.js"></script>
+    <script defer src="./visual-engine.js"></script>
+    <script defer src="./visualizations/template-minimal.js"></script>
+    <script defer src="./visualizations/fireworks.js"></script>
+    <script defer src="./app.js"></script>
+  </head>
+  <body>
+    <header class="top-bar">
+      <h1>MASS60 &bull; Streaming Visual Playground</h1>
+      <p>Connect the ESP32S3 camera stream, then explore interactive overlays powered by p5.js.</p>
+    </header>
+    <main>
+      <section class="canvas-panel">
+        <div id="canvas-wrapper"></div>
+        <div class="status-bar">
+          <span id="stream-status">Waiting for video...</span>
+          <span id="visual-label"></span>
+        </div>
+      </section>
+      <aside class="control-panel">
+        <div class="control-group">
+          <label for="stream-url">Camera stream URL</label>
+          <input id="stream-url" type="text" value="http://192.168.4.1/stream" />
+          <button id="apply-stream">Apply</button>
+        </div>
+        <div class="control-group">
+          <span class="group-label">Active visual</span>
+          <div id="visual-buttons" class="button-row"></div>
+        </div>
+        <div class="control-group">
+          <span class="group-label">Keyboard shortcuts</span>
+          <ul>
+            <li><code>1-9</code> switch visuals</li>
+            <li><code>Space</code> pause / resume draw loop</li>
+            <li><code>S</code> save a PNG snapshot</li>
+          </ul>
+        </div>
+        <div class="control-group">
+          <span class="group-label">Live Server quickstart</span>
+          <ol>
+            <li>Open this folder in VS Code.</li>
+            <li>Install <strong>Live Server</strong> extension.</li>
+            <li>Right-click <code>index.html</code> and choose "Open with Live Server".</li>
+            <li>Grant browser permission if prompted for insecure content (HTTP over LAN).</li>
+          </ol>
+        </div>
+      </aside>
+    </main>
+    <footer>
+      <p>Tip: Pair this page with a Python CV module by sending its results over WebSocket or polling a local API.</p>
+    </footer>
+  </body>
+</html>
