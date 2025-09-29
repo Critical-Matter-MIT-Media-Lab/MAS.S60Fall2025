@@ -3,7 +3,7 @@
 This repository packages everything required to run an entry-level computer vision workshop around the Seeed Studio XIAO ESP32S3 Sense. You can:
 
 - Flash the XIAO with Arduino-ready firmware that exposes an MJPEG stream and snapshot endpoint.
-- Consume the stream with Python demos covering facial expressions, gestures, object detection, and CLIP zero-shot recognition.
+- Consume the stream with Python demos covering gestures, object detection, and CLIP zero-shot recognition.
 - Build browser-based visualisations with p5.js so participants see immediate feedback in their browser.
 - Follow facilitator guides that explain the recommended agenda, checklists, and troubleshooting paths.
 
@@ -21,9 +21,16 @@ This repository packages everything required to run an entry-level computer visi
 
 1. **Firmware** - Follow `docs/1_firmware_setup.md` to upload the sketch. The default configuration brings up a SoftAP hotspot; add station credentials if you want the board on an existing router while keeping the hotspot available.
 2. **Stream Test** - Connect to `XIAO-CV-Workshop` and open `http://192.168.4.1/`. The portal matches the official Seeed interface and lets you adjust camera settings. If the board also joined your router, you can use the LAN IP printed on the serial console.
-3. **Python Demos** - Set up a virtual environment via `docs/2_cv_workflow.md` and run the desired script (facial expressions, gestures, YOLO, CLIP). Each script prints the exact command line options it supports.
+
+> Stream endpoint: the MJPEG stream is served on port 81. Use `http://<board-ip>:81/stream` (SoftAP example: `http://192.168.4.1:81/stream`).
+
+3. **Python Demos** - Set up a virtual environment via `docs/2_cv_workflow.md` and run the desired script (gestures, YOLO, CLIP). Each script prints the exact command line options it supports.
 4. **Browser Visuals** - Launch `webcam-starter/web/index.html` with the VS Code Live Server extension and explore the provided visuals, or build your own by duplicating the templates.
 5. **Facilitation** - Use the checklist, agenda, and troubleshooting docs in `docs/` to run the session smoothly.
+
+### Quick Demo
+For a 5-minute end-to-end demo (camera visual + gesture bubbles), see `docs/quick_demo.md`.
+
 
 The remaining sections of this README point to deeper resources for each component.
 
@@ -43,7 +50,7 @@ The remaining sections of this README point to deeper resources for each compone
 ## Web Visualisation Highlights
 
 - `webcam-starter/web/visual-engine.js` hosts a reusable p5.js engine that mirrors the MJPEG feed, manages visual selection, and exposes helper methods (`drawCamera`, `togglePause`, `saveFrame`).
-- Two visuals are included out of the box: `template-minimal.js` (basic HUD) and `fireworks.js` (gesture/expression–driven fireworks). The fireworks visual listens on `ws://<host>:8765/fireworks` by default; override via `?ws=ws://localhost:8765/fireworks` in the page URL.
+- Two visuals are included out of the box: `template-minimal.js` (minimal template) and `bubbles.js` (gesture‑colored transparent bubbles). The Bubbles visual listens on `ws://<host>:8765/fireworks` by default; override via `?ws=ws://localhost:8765/fireworks` in the page URL.
 - Full instructions for Live Server and suggested teaching flow are in `webcam-starter/README.md` and `docs/3_visualization_workflow.md`.
 
 ## Facilitator Resources

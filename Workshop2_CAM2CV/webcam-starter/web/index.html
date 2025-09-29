@@ -7,8 +7,8 @@
     <link rel="stylesheet" href="./styles.css" />
     <script defer src="https://cdn.jsdelivr.net/npm/p5@1.9.2/lib/p5.min.js"></script>
     <script defer src="./visual-engine.js"></script>
-    <script defer src="./visualizations/template-minimal.js"></script>
-    <script defer src="./visualizations/fireworks.js"></script>
+    <script defer src="./visualizations/bubbles.js"></script>
+
     <script defer src="./app.js"></script>
   </head>
   <body>
@@ -27,29 +27,16 @@
       <aside class="control-panel">
         <div class="control-group">
           <label for="stream-url">Camera stream URL</label>
-          <input id="stream-url" type="text" value="http://192.168.4.1/stream" />
+          <input id="stream-url" type="text" value="http://192.168.4.1:81/stream" />
           <button id="apply-stream">Apply</button>
+          <div style="margin-top:8px">
+            <label><input type="checkbox" id="use-browser-cam" /> Use browser webcam (no ESP32)</label>
+            <div style="font-size:12px;color:#9aa;">Tip: You can also open with <code>?cam=browser</code> to enable automatically.</div>
+          </div>
         </div>
         <div class="control-group">
           <span class="group-label">Active visual</span>
           <div id="visual-buttons" class="button-row"></div>
-        </div>
-        <div class="control-group">
-          <span class="group-label">Keyboard shortcuts</span>
-          <ul>
-            <li><code>1-9</code> switch visuals</li>
-            <li><code>Space</code> pause / resume draw loop</li>
-            <li><code>S</code> save a PNG snapshot</li>
-          </ul>
-        </div>
-        <div class="control-group">
-          <span class="group-label">Live Server quickstart</span>
-          <ol>
-            <li>Open this folder in VS Code.</li>
-            <li>Install <strong>Live Server</strong> extension.</li>
-            <li>Right-click <code>index.html</code> and choose "Open with Live Server".</li>
-            <li>Grant browser permission if prompted for insecure content (HTTP over LAN).</li>
-          </ol>
         </div>
       </aside>
     </main>

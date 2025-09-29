@@ -7,7 +7,7 @@ entirely on CPU.
 ## Environment Setup
 
 ```bash
-cd MASS60_CV_Workshop/cv-modules
+cd Workshop2_CAM2CV/cv-modules
 python -m venv .venv
 # Windows
 .venv/Scripts/activate
@@ -23,28 +23,24 @@ Dependencies: OpenCV, MediaPipe, NumPy, Requests (for model downloads).
 
 | Script | What it does | Key Flags |
 |--------|--------------|-----------|
-| `facial_expression_recognition.py` | MediaPipe Face Mesh + heuristics, classifies happy/surprised/angry/sad/neutral | `--display`, `--save`, `--min-score` |
-| `gesture_detection.py` | MediaPipe Hands + rule-based gestures (open palm, fist, peace, thumbs, pinch) | `--display`, `--max-hands` |
-| `object_detection.py` | MediaPipe EfficientDet Lite0 object detector | `--display`, `--save`, `--score`, `--max-results` |
-| `image_classification.py` | MediaPipe MobileNet image classifier (ImageNet labels) | `--display`, `--top-k`, `--score` |
+| `gesture_detection.py` | Gesture bridge. Backends: rules (MediaPipe Hands heuristics) or tasks (MediaPipe Tasks GestureRecognizer). Broadcasts WebSocket payloads for front-end visuals. | `--gesture-backend {rules,tasks}`, `--gesture-model <.task>`, `--display`, `--save` |
 
 
 ## WebSocket Bridge to p5.js
 
-Both `facial_expression_recognition.py` and `gesture_detection.py` can broadcast live JSON to the front-end fireworks visual over WebSocket.
+`gesture_detection.py` can broadcast live JSON to the front-end Bubbles visual over WebSocket.
 
 - Default endpoint: `ws://<host>:8765/fireworks`
 - Override via flags: `--ws-host 0.0.0.0 --ws-port 8765 --ws-path /fireworks`
 - Example run:
-  - `python facial_expression_recognition.py --source http://192.168.4.1/stream`
-  - `python gesture_detection.py --source http://192.168.4.1/stream`
+  - `python gesture_detection.py --webcam --gesture-backend tasks --gesture-model resources/models/gesture_recognizer.task`
 
 Payload (example):
 ```json
-{"type":"gesture","gesture":"open_palm","confidence":0.92,"hue":210,"launch_power":0.6,"spark_density":1.2,"twist":0.15,"center":{"x":0.52,"y":0.44},"style":"nebula"}
+{"type":"gesture","gesture":"open_palm","confidence":0.92}
 ```
 
-Open `webcam-starter/web/index.html` and select the Fireworks visual. If your WebSocket address differs, append `?ws=ws://localhost:8765/fireworks` to the page URL.
+Open `webcam-starter/web/index.html` (Bubbles is loaded) — if your WebSocket address differs, append `?ws=ws://localhost:8765/fireworks` to the page URL.
 
 All scripts accept `--source http://<device-ip>/stream`. Default assumes the
 ESP32 SoftAP (`http://192.168.4.1/stream`).

@@ -22,9 +22,12 @@ Browse to `http://127.0.0.1:5500/` afterwards.
 
 ## 2. Connect to the ESP32 Stream
 
-1. Type the camera URL (for example `http://192.168.4.1/stream`) into the **Camera stream URL** field.
+1. Type the camera URL (for example `http://192.168.4.1:81/stream`) into the **Camera stream URL** field.
 2. Click **Apply**. The status indicator changes to Streaming... once frames arrive.
 3. If the browser blocks mixed content (HTTPS page pulling HTTP video), allow insecure content in the site settings or run Live Server over plain HTTP only.
+
+> Note: The ESP32 runs the web portal on port 80 and the MJPEG stream on port 81. Always use `http://<ip>:81/stream` (SoftAP: `http://192.168.4.1:81/stream` or the printed LAN IP with `:81`).
+
 
 ## 3. Visual Engine Basics
 
@@ -44,21 +47,22 @@ Keyboard shortcuts displayed in the UI:
 
 | Visual | File | Description |
 |--------|------|-------------|
-| Minimal HUD | `visualizations/template-minimal.js` | Mirrors the camera feed, displays stream status and FPS, and draws a simple frame outline. |
-| Gesture/Expression Fireworks | `visualizations/fireworks.js` | Driven by a CV WebSocket bridge: gestures or facial expressions control hue, launch height, density, twist and professional firework styles (chrysanthemum, willow, ring, crossette, pistil, palm). |
+| Minimal Template | `visualizations/template-minimal.js` | Mirrors the camera feed, displays stream status and FPS, and draws a simple frame outline. |
+| Gesture Bubbles | `visualizations/bubbles.js` | Transparent bubbles with continuous drift; each gesture maps to a distinct color. Listens to the CV WebSocket bridge. |
 
 Each visual registers itself by pushing an object into `window.VISUALS`. The object can define `init`, `draw`, and `dispose` hooks that receive the shared engine and p5.js instance.
 
 ## 4.5 Connect the CV WebSocket bridge
 
-The fireworks visual listens on a WebSocket for JSON payloads from the Python CV modules.
+The Bubbles visual listens on a WebSocket for JSON payloads from the Python CV gesture bridge.
 
 - Default endpoint: `ws://<host>:8765/fireworks` (auto-selected based on the page protocol)
 - You can override via URL param: `index.html?ws=ws://localhost:8765/fireworks`
-- Start either CV module to broadcast:
-  - Gestures: `python cv-modules/gesture_detection.py --source http://192.168.4.1/stream`
-  - Facial expressions: `python cv-modules/facial_expression_recognition.py --source http://192.168.4.1/stream`
+- Start the gesture bridge to broadcast:
+  - `python Workshop2_CAM2CV/cv-modules/gesture_detection.py --webcam --gesture-backend tasks --gesture-model Workshop2_CAM2CV/resources/models/gesture_recognizer.task`
 - Optional flags on the CV side: `--ws-host 0.0.0.0 --ws-port 8765 --ws-path /fireworks`
+
+Windows note: the Python CV modules run headless by default (OpenCV preview is disabled) to avoid a known GUI freeze on Windows. Use the browser preview instead; `--display` is ignored on Windows and still works on macOS/Linux.
 
 Payload shape (example):
 
@@ -66,13 +70,7 @@ Payload shape (example):
 {
   "type": "gesture",
   "gesture": "open_palm",
-  "confidence": 0.92,
-  "hue": 210,
-  "launch_power": 0.6,
-  "spark_density": 1.2,
-  "twist": 0.15,
-  "center": {"x": 0.52, "y": 0.44},
-  "style": "nebula"
+  "confidence": 0.92
 }
 ```
 
@@ -99,7 +97,7 @@ Ideas:
 |---------|-----|
 | Canvas stays blank | Confirm the ESP32 stream works in a regular browser tab first, then check for mixed-content blocks. |
 | FPS dips below 20 | Lower the ESP32 frame size in `config.h` or reduce the complexity of the visual (fewer particles, less per-frame processing). |
-| Motion fireworks never trigger | Improve lighting or lower the threshold constant at the top of `fireworks.js`. |
+| Bubbles color never changes | Ensure the gesture bridge is running and payloads show `type:"gesture"`; idle gestures intentionally do not change color. |
 | `CORS` errors when fetching local APIs | Serve the Python endpoint with `Access-Control-Allow-Origin: *` or use a simple proxy. |
 
 With the browser visuals running, demonstrate how the ESP32 hardware, Python intelligence, and web front end work together end-to-end.

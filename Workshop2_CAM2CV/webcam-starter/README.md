@@ -13,13 +13,13 @@ webcam-starter/
     visual-engine.js       Shared runtime that fetches the MJPEG stream
     visualizations/
       template-minimal.js  Baseline overlay example
-      fireworks.js         Motion-triggered particle system demo
+      bubbles.js           Transparent bubbles visual (gesture-colored)
 ```
 
 ## Running with VS Code Live Server
 
 1. Install the **Live Server** extension in VS Code.
-2. Open `MASS60_CV_Workshop/webcam-starter/web/index.html`.
+2. Open `Workshop2_CAM2CV/webcam-starter/web/index.html`.
 3. Right-click inside the editor and choose **Open with Live Server**. The page opens at `http://127.0.0.1:5500/` (port may vary).
 4. Update the stream URL field to match your ESP32S3 endpoint (e.g., `http://192.168.4.1/stream`).
 5. If the browser blocks mixed content (HTTP video from an HTTPS page), allow it via the site settings or run Live Server over HTTP only.
@@ -27,7 +27,14 @@ webcam-starter/
 
 ### CV WebSocket bridge
 
-The `visualizations/fireworks.js` visual consumes JSON over WebSocket (default `ws://<host>:8765/fireworks`). Override via `?ws=ws://localhost:8765/fireworks` in the page URL. Start either `cv-modules/gesture_detection.py` or `cv-modules/facial_expression_recognition.py` to drive the effect.
+The `visualizations/bubbles.js` visual consumes JSON over WebSocket (default `ws://<host>:8765/fireworks`).
+- Override via `?ws=ws://localhost:8765/fireworks` in the page URL
+- Start the gesture bridge to drive the effect:
+  - `cv-modules/gesture_detection.py` (supports `--gesture-backend tasks` + `--gesture-model <.task>`)
+
+Data contract consumed by bubbles:
+- `type: "gesture"`, `gesture: <label>`, `confidence: <0..1>`
+- Each gesture label maps to a fixed color in the visual; hue from backend is ignored
 
 ## Adding New Visuals
 
@@ -61,8 +68,8 @@ If you need to run without internet access, download `p5.min.js` ahead of time a
 
 ## Teaching Flow
 
-1. Start with **Minimal HUD** to explain how the stream is ingested.
-2. Switch to **Motion Fireworks** to showcase reactive visuals and basic frame differencing.
-3. Encourage learners to pipe JSON results from the Python CV modules (e.g., via WebSocket) and render them inside a new visualization.
+1. Start with the **Minimal Template** to explain how the stream is ingested.
+2. Switch to **Gesture Bubbles** to demonstrate consuming real-time JSON over WebSocket and mapping gestures to colors.
+3. Encourage learners to add visuals by duplicating `template-minimal.js`, and to experiment with different gesture mappings.
 
 All captions, comments, and UI labels remain in English to stay consistent with the rest of the workshop assets.

@@ -11,9 +11,9 @@ UserAgent = "MASS60-CV-Workshop/1.0"
 
 
 class MJPEGStream:
-    """Naive MJPEG iterator for ESP32-style multipart streams."""
+    """Naive MJPEG iterator for ESP32-style multipart streams with auto-reconnect."""
 
-    def __init__(self, url: str, timeout: float = 10.0, chunk_size: int = 1024) -> None:
+    def __init__(self, url: str, timeout: float = 10.0, chunk_size: int = 2048) -> None:
         self.url = url
         self.timeout = timeout
         self.chunk_size = chunk_size
@@ -29,7 +29,12 @@ class MJPEGStream:
     def open(self) -> None:
         if self._response is not None:
             return
-        headers = {"User-Agent": UserAgent, "Accept": "multipart/x-mixed-replace"}
+        headers = {
+            "User-Agent": UserAgent,
+            "Accept": "multipart/x-mixed-replace",
+            "Connection": "keep-alive",
+            "Cache-Control": "no-cache",
+        }
         self._response = requests.get(
             self.url,
             stream=True,
@@ -46,23 +51,84 @@ class MJPEGStream:
     def frames(self) -> Generator[np.ndarray, None, None]:
         if self._response is None:
             self.open()
-        assert self._response is not None
-
         buffer = bytearray()
         jpeg_start = b"\xff\xd8"
         jpeg_end = b"\xff\xd9"
 
-        for chunk in self._response.iter_content(chunk_size=self.chunk_size):
-            buffer.extend(chunk)
-            start = buffer.find(jpeg_start)
-            end = buffer.find(jpeg_end)
-            if start != -1 and end != -1 and end > start:
-                jpg = buffer[start : end + 2]
-                del buffer[: end + 2]
-                frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
-                if frame is None:
+        while True:
+            try:
+                assert self._response is not None
+                for chunk in self._response.iter_content(chunk_size=self.chunk_size):
+                    if not chunk:
+                        continue
+                    buffer.extend(chunk)
+                    start = buffer.find(jpeg_start)
+                    end = buffer.find(jpeg_end)
+                    if start != -1 and end != -1 and end > start:
+                        jpg = buffer[start : end + 2]
+                        del buffer[: end + 2]
+                        frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+                        if frame is None:
+                            continue
+                        yield frame
+            except Exception:
+                # On any networking/decoding error, attempt to reconnect quickly
+                self.close()
+                time.sleep(0.3)
+                try:
+                    self.open()
+                    buffer.clear()
                     continue
-                yield frame
+                except Exception:
+                    time.sleep(0.7)
+                    # Try again on next loop
+                    continue
+
+
+class WebcamStream:
+    """OpenCV VideoCapture wrapper that mimics MJPEGStream API."""
+
+    def __init__(self, index: int = 0, width: int = 640, height: int = 480, fps: int = 30) -> None:
+        self.index = index
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self._cap: Optional[cv2.VideoCapture] = None
+
+    def __enter__(self) -> "WebcamStream":
+        self.open()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def open(self) -> None:
+        if self._cap is not None:
+            return
+        cap = cv2.VideoCapture(self.index, cv2.CAP_DSHOW)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        cap.set(cv2.CAP_PROP_FPS, self.fps)
+        self._cap = cap
+
+    def close(self) -> None:
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
+
+    def frames(self) -> Generator[np.ndarray, None, None]:
+        if self._cap is None:
+            self.open()
+        assert self._cap is not None
+        while True:
+            ok, frame = self._cap.read()
+            if not ok:
+                # Try to reopen on failure
+                self.close()
+                time.sleep(0.2)
+                self.open()
+                continue
+            yield frame
 
 
 class FrameRateTracker:

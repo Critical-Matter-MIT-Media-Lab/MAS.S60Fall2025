@@ -26,6 +26,11 @@
       this.canvas = null;
       this.p5 = null;
 
+      // Browser webcam support
+      this.useBrowserCam = false;
+      this.browserVideo = null;
+      this.mediaStream = null;
+
       this.initUI();
       this.createSketch();
     }
@@ -44,6 +49,20 @@
       }
       this.renderVisualButtons();
       document.addEventListener("keydown", (event) => this.handleKey(event));
+
+      // Browser webcam toggle
+      const camToggle = document.getElementById("use-browser-cam");
+      if (camToggle) {
+        const params = new URLSearchParams(window.location.search || "");
+        if (params.get("cam") === "browser") {
+          camToggle.checked = true;
+        }
+        this.useBrowserCam = !!camToggle.checked;
+        camToggle.addEventListener("change", () => this.enableBrowserWebcam(camToggle.checked));
+        if (this.useBrowserCam) {
+          this.enableBrowserWebcam(true);
+        }
+      }
     }
 
     createSketch() {
@@ -78,6 +97,42 @@
       }, this.mount);
     }
 
+    async enableBrowserWebcam(enabled) {
+      try {
+        if (enabled) {
+          if (this.mediaStream) return;
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            this.updateStatus("Browser webcam not supported");
+            return;
+          }
+          this.mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          const video = document.createElement("video");
+          video.autoplay = true;
+          video.muted = true;
+          video.playsInline = true;
+          video.srcObject = this.mediaStream;
+          video.style.display = "none";
+          document.body.appendChild(video);
+          this.browserVideo = video;
+          this.updateStatus("Browser cam ready");
+        } else {
+          if (this.mediaStream) {
+            this.mediaStream.getTracks().forEach((t) => t.stop());
+          }
+          if (this.browserVideo && this.browserVideo.parentNode) {
+            this.browserVideo.parentNode.removeChild(this.browserVideo);
+          }
+          this.mediaStream = null;
+          this.browserVideo = null;
+          this.updateStatus("Streaming");
+        }
+        this.useBrowserCam = !!enabled;
+      } catch (err) {
+        console.error(err);
+        this.updateStatus("Webcam permission denied");
+      }
+    }
+
     drawFrame(p) {
       p.push();
       p.noStroke();
@@ -107,9 +162,13 @@
 
     drawCamera(p, options = {}) {
       const { mirror = false, opacity = 255 } = options;
-      const img = this.cameraElement?.elt;
-      if (!img || !img.complete || img.naturalWidth === 0) {
-        return;
+      const source = this.browserVideo || this.cameraElement?.elt;
+      if (!source) return;
+      // For image elements, ensure it's loaded; for video, check ready state
+      if (source instanceof HTMLImageElement) {
+        if (!source.complete || source.naturalWidth === 0) return;
+      } else if (source instanceof HTMLVideoElement) {
+        if (source.readyState < 2) return; // HAVE_CURRENT_DATA
       }
       const ctx = p.drawingContext;
       ctx.save();
@@ -119,7 +178,7 @@
         ctx.translate(this.width, 0);
         ctx.scale(-1, 1);
       }
-      ctx.drawImage(img, 0, 0, this.width, this.height);
+      ctx.drawImage(source, 0, 0, this.width, this.height);
       ctx.restore();
     }
 

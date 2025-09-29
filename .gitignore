@@ -1,0 +1,7 @@
+# Global ignores for the repository
+# Ignore local Python virtual environments
+Workshop2_CAM2CV/cv-modules/.venv/
+.venv/
+**/.venv/
+
+

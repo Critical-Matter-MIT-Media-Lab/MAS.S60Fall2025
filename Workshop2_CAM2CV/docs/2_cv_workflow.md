@@ -5,17 +5,17 @@ Follow this playbook to prepare the Python environment, run the demo scripts, an
 ## 1. Prepare the Environment
 
 ```bash
-cd MASS60_CV_Workshop/cv-modules
+cd Workshop2_CAM2CV/cv-modules
 python -m venv .venv
-.venv/Scripts/activate  # Windows
-# source .venv/bin/activate  # macOS/Linux
+.venv\Scripts\Activate.ps1  # Windows PowerShell
+# source .venv/bin/activate    # macOS/Linux
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Dependencies are lightweight (OpenCV, MediaPipe, NumPy, Requests) so the first install finishes quickly even在受限網路。
+Dependencies are lightweight (OpenCV, MediaPipe, NumPy, Requests) so the first install finishes quickly.
 
-SoftAP mode exposes the stream at `http://192.168.4.1/` by default. If you switched the firmware to station mode, substitute the IP printed on the serial monitor.
+SoftAP portal is at `http://192.168.4.1/` by default; the MJPEG stream is at `http://192.168.4.1:81/stream`. If you switched the firmware to station mode, use the LAN IP printed on the serial monitor (append `:81` for the stream).
 
 ## 2. Confirm Connectivity
 
@@ -40,35 +40,35 @@ A non-zero byte count confirms the stream is alive.
 
 | Demo | Command | Notes |
 |------|---------|-------|
-| Facial expression heuristics | `python facial_expression_recognition.py --display` | Uses MediaPipe Face Mesh + rules (happy/surprised/angry/sad/neutral). |
-| Gesture recognition | `python gesture_detection.py --display` | MediaPipe Hands with simple gesture heuristics (open palm、fist、peace、pinch等). |
-| Object detection | `python object_detection.py --display` | MediaPipe EfficientDet Lite0; downloads ~4.3MB TFLite model on first run. |
-| Image classification | `python image_classification.py --display --top-k 5` | MobileNetV3 classifier with ImageNet labels。 |
+| Gesture recognition | `python gesture_detection.py --source http://<device-ip>:81/stream` | Backends: rules (MediaPipe Hands heuristics) or tasks (MediaPipe Tasks GestureRecognizer via `--gesture-backend tasks`). |
+| Object detection | `python object_detection.py --source http://<device-ip>:81/stream --display` | EfficientDet Lite0 (TFLite); downloads ~4.3MB model on first run. |
+| Image classification | `python image_classification.py --source http://<device-ip>:81/stream --display --top-k 5` | MobileNetV3 classifier with ImageNet labels. |
 
-All scripts accept `--source http://<device-ip>/stream` and `--save output.mp4` to archive annotated footage.
+Note (Windows): the OpenCV preview window is disabled automatically to avoid a known GUI freeze. Use the browser preview in `webcam-starter/web/`. On macOS/Linux, `--display` works as usual.
+
+All scripts accept `--source http://<device-ip>:81/stream` and `--save output.mp4` to archive annotated footage.
 
 
 ### WebSocket output to p5.js
 
-`facial_expression_recognition.py` 與 `gesture_detection.py` 也可透過 WebSocket 推送 JSON（預設 `ws://<host>:8765/fireworks`）。
+`gesture_detection.py` can broadcast JSON over WebSocket (default `ws://<host>:8765/fireworks`). The front end consumes this in the Bubbles visual.
 
-- 可用參數：`--ws-host 0.0.0.0 --ws-port 8765 --ws-path /fireworks`
-- 在前端 `webcam-starter/web/index.html` 中選擇 Fireworks，或使用網址覆蓋：`?ws=ws://localhost:8765/fireworks`
+- Options: `--ws-host 0.0.0.0 --ws-port 8765 --ws-path /fireworks`
+- In the front end (`webcam-starter/web/index.html`) Bubbles is loaded by default; you can override the WS via URL: `?ws=ws://localhost:8765/fireworks`
 
 ## 4. Extend the Demos
 
-- 修改 `facial_expression_recognition.py` 的規則以識別更多細微表情。
-- 在 `gesture_detection.py` 的 `classify_gesture` 中加入自訂手勢，立刻可視化。
-- 對 `object_detection.py` / `image_classification.py` 限制 `--max-results` 或改 `--score`，觀察模型反應。
-- 建立小型 Flask API 轉出偵測結果，再由 p5.js 端抓取渲染。
+- Gestures: add custom gesture rules in `classify_gesture()` (rules backend) or switch to the Tasks backend (`--gesture-backend tasks`) for robust, pre-trained categories.
+- For `object_detection.py` / `image_classification.py`, tweak `--max-results` or `--score` thresholds to observe model behaviour.
+- Expose detections via a tiny Flask API and consume them from p5.js in the browser.
 
 ## 5. Troubleshooting
 
 | Issue | Fix |
 |-------|-----|
-| `mediapipe` import fails | 確認 Python 版本 3.10/3.11，重新執行 `pip install -r requirements.txt`。 |
-| Stream lag | 降低攝像頭解析度或提高 `--score`、降低 `--max-results`。 |
-| No GUI window | 在 macOS 從 Terminal 啟動，或確保應用具有螢幕錄製權限。 |
-| 模型下載失敗 | 手動下載對應的 TFLite 模型放入 `resources/models/`。 |
+| `mediapipe` import fails | Ensure Python 3.10/3.11, then re-run `pip install -r requirements.txt`. |
+| Stream lag | Lower the camera resolution in firmware or increase `--score`/decrease `--max-results`. |
+| No GUI window | On macOS, launch from Terminal; ensure the app has screen recording permission if needed. |
+| Model download fails | Manually download the required TFLite model into `resources/models/`. |
 
 Once the Python modules are running smoothly, move on to `docs/3_visualization_workflow.md` to link detections with the p5.js playground.
